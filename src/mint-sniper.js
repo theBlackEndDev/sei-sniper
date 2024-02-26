@@ -1,16 +1,14 @@
-import { getMintDetailsFromUrl, getCollectionConfig, getHashedAddress, getFormattedTimestamp} from './helpers.js';
-import { generateMerkleProof, generateMerkleRoot, isMatchingMerkle } from './merkle.js';
-import { isProcessingMintQueue, executionQueue, updateProcessingMintQueueStatus, mintedTokens, addMintedTokenSuccess } from './config.js';
-import  {removeWallet} from "./index.js";
+import {getCollectionConfig, getFormattedTimestamp, getHashedAddress, getMintDetailsFromUrl} from './helpers.js';
+import {generateMerkleProof, generateMerkleRoot, isMatchingMerkle} from './merkle.js';
+import {addMintedTokenSuccess, executionQueue, isProcessingMintQueue, mintedTokens, updateProcessingMintQueueStatus} from './config.js';
+import {removeWallet} from "./index.js";
 
 const lightHouseContractAddress = "sei1hjsqrfdg2hvwl3gacg4fkznurf36usrv7rkzkyh29wz3guuzeh0snslz7d";
-const frankenFrensFeeAddress = "sei1t403lg45sl5n02jlah7zjaw2rdtuayh4nfh352";
-const frankenFrensFeeAmount = "100000"; //0.1 SEI per successful mint
 const mintLimitTotal = parseInt(process.env.MINT_LIMIT_TOTAL, 10);
 const walletMintCounts = {};
 
 
-export async function mintSneiper(senderAddress, needsToPayFee, signingCosmWasmClient) {
+export async function mintSniper(senderAddress, signingCosmWasmClient) {
     try {
       if(!isProcessingMintQueue[senderAddress]){
         if(walletMintCounts[senderAddress] >= process.env.MINT_LIMIT_PER_WALLET) {
@@ -59,8 +57,7 @@ export async function mintSneiper(senderAddress, needsToPayFee, signingCosmWasmC
                               merkleProof, 
                               contractAddress, 
                               groupName: group.name, 
-                              unitPrice: group.unit_price, 
-                              needsToPayFee, 
+                              unitPrice: group.unit_price,
                               signingCosmWasmClient
                           });
                           await processQueue();
@@ -84,15 +81,13 @@ export async function mintSneiper(senderAddress, needsToPayFee, signingCosmWasmC
                               merkleProof: null, 
                               contractAddress, 
                               groupName: group.name, 
-                              unitPrice: group.unit_price, 
-                              needsToPayFee, 
+                              unitPrice: group.unit_price,
                               signingCosmWasmClient
                           });
                           await processQueue();
                       } else {
                           console.log(`${senderAddress},${getFormattedTimestamp()}:Mint phase not current for group: ${group.name}`);
                       }
-                      continue;
                   }
               }
               updateProcessingMintQueueStatus(false, senderAddress);
@@ -107,7 +102,7 @@ export async function mintSneiper(senderAddress, needsToPayFee, signingCosmWasmC
         }
       }
     } catch (error){
-        console.log(`${senderAddress},${getFormattedTimestamp()}:Sneipe unsuccessful! ` + error.message);
+        console.log(`${senderAddress},${getFormattedTimestamp()}:Snipe unsuccessful! ` + error.message);
     }
 }
 
@@ -116,21 +111,21 @@ export async function processQueue() {
       return;
   }
 
-  const {senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, needsToPayFee, signingCosmWasmClient} = executionQueue.shift();
+  const {senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, signingCosmWasmClient} = executionQueue.shift();
   updateProcessingMintQueueStatus(true, senderAddress);
 
   try{
-    console.log(`${senderAddress},${getFormattedTimestamp()}:Sneiping...`);
-    await executeContract(senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, needsToPayFee, signingCosmWasmClient);
+    console.log(`${senderAddress},${getFormattedTimestamp()}:Sniping...`);
+    await executeContract(senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, signingCosmWasmClient);
   } catch (error) {
-    console.log(`${senderAddress},${getFormattedTimestamp()}:Sneipe unsuccessful! ` + error.message);
+    console.log(`${senderAddress},${getFormattedTimestamp()}:Snipe unsuccessful! ` + error.message);
   } finally {
 
   }
   updateProcessingMintQueueStatus(false, senderAddress);
 }
 
-export async function executeContract(senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, needsToPayFee, signingCosmWasmClient) {
+export async function executeContract(senderAddress, hashedAddress, merkleProof, contractAddress, groupName, unitPrice, signingCosmWasmClient) {
     try {
       const instruction = {
         contractAddress: lightHouseContractAddress,
@@ -146,7 +141,7 @@ export async function executeContract(senderAddress, hashedAddress, merkleProof,
       };
 
         const unitPriceNumber = parseFloat(unitPrice);
-        const lighthouseFeeNumber = unitPrice == "0" ? parseFloat("0") : parseFloat("1500000"); //if unit price is 0, no light house fee
+        const lighthouseFeeNumber = unitPrice === "0" ? parseFloat("0") : parseFloat("1500000"); //if unit price is 0, no light house fee
         const finalAmountWithLighthouseFee = unitPriceNumber + lighthouseFeeNumber; //Add 1.5 SEI for Lighthouse fee
   
         const totalFunds = [{
@@ -154,7 +149,7 @@ export async function executeContract(senderAddress, hashedAddress, merkleProof,
           amount: finalAmountWithLighthouseFee.toString()
         }];
 
-        if(unitPrice != "0")
+        if(unitPrice !== "0")
         {
           instruction.funds = totalFunds;
         }
@@ -185,35 +180,13 @@ export async function executeContract(senderAddress, hashedAddress, merkleProof,
         }
         
         if(mintedTokens.length > 0){
-          console.log(`${senderAddress},${getFormattedTimestamp()}:Sneipe successful for ${currentMintCount} NFTs...Tx hash: ${result.transactionHash}`);
+          console.log(`${senderAddress},${getFormattedTimestamp()}:Snipe successful for ${currentMintCount} NFTs...Tx hash: ${result.transactionHash}`);
           walletMintCounts[senderAddress] = (walletMintCounts[senderAddress] || 0) + 1;
-          if(needsToPayFee){
-            try {
-              const finalFrankenFrensFeeAmount = parseFloat(frankenFrensFeeAmount) * currentMintCount;
-              const convertedFeeAmount = (finalFrankenFrensFeeAmount / 1000000).toString();
-              console.log(`${senderAddress},${getFormattedTimestamp()}:You do not hold enough FrankenFrens...A fee of ${convertedFeeAmount} SEI is being sent as there were ${currentMintCount} succesful mints...`)
-              const feeFunds = [{
-                denom: 'usei',
-                amount: finalFrankenFrensFeeAmount.toString()
-              }];
-              const feeResult = await signingCosmWasmClient.sendTokens(senderAddress, frankenFrensFeeAddress, feeFunds, "auto", "fee for FrankenFrens mint sniper");
-              if(feeResult.transactionHash){
-                console.log(`${senderAddress},${getFormattedTimestamp()}:FrankenFrens fee sent. Thank you.`)
-              }
-              else{
-                console.log(`${senderAddress},${getFormattedTimestamp()}:FrankenFrens fee not sent due to an issue. You have not been charged.`)
-              }
-            }catch (error){
-              console.log(`${senderAddress},${getFormattedTimestamp()}:FrankenFrens fee transfer unsuccesful: " + ${error.message} + ". You have not been charged.`);
-            }finally {
-           
-            }
-          }
-        }else {
-          console.log(`${senderAddress},${getFormattedTimestamp()}:Sneipe unsuccessful!`)
+        } else {
+          console.log(`${senderAddress},${getFormattedTimestamp()}:Snipe unsuccessful!`)
         }
       } catch (error) {
-        console.log(`${senderAddress},${getFormattedTimestamp()}:Sneipe unsuccessful! ` + error.message);
+        console.log(`${senderAddress},${getFormattedTimestamp()}:Snipe unsuccessful! ` + error.message);
 
         if(error.message.toUpperCase().includes("MAX TOKENS MINTED"))
         {
@@ -239,8 +212,7 @@ function findContractAddress(mintDetails)
 {
   for (let prop in mintDetails) {
     if (mintDetails.hasOwnProperty(prop) && isValidContractAddress(mintDetails[prop])) {
-        let contractAddress = mintDetails[prop];
-        return contractAddress;
+      return mintDetails[prop];
     }
   }
 }

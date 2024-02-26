@@ -1,10 +1,12 @@
 import { clearAllIntervals, isValidListing, getFormattedTimestamp} from './helpers.js';
 import { boughtTokenIds, isProcessingBuyQueue, executionQueue, updateProcessingBuyQueueStatus, targetTokenIds } from './config.js';
 
-export async function buySneiper(senderAddress, signingCosmWasmClient) {
+export async function buySniper(senderAddress, signingCosmWasmClient) {
     try {
       if(process.env.TOKEN_ID === "SWEEP" || process.env.TOKEN_ID === "AUTO") {
-        const palletListingResponse = await fetch(`https://api.prod.pallet.exchange/api/v2/nfts/${process.env.CONTRACT_ADDRESS}/tokens?token_id_exact=false&buy_now_only=true&timed_auction_only=false&not_for_sale=false&max_price=${process.env.PRICE_LIMIT}&sort_by_price=asc&sort_by_id=asc&page=1&page_size=25`);
+          const desiredTraits = JSON.parse(process.env.DESIRED_TRAITS || '[]');
+
+          const palletListingResponse = await fetch(`https://api.prod.pallet.exchange/api/v2/nfts/${process.env.CONTRACT_ADDRESS}/tokens?token_id_exact=false&buy_now_only=true&timed_auction_only=false&not_for_sale=false&max_price=${process.env.PRICE_LIMIT}&sort_by_price=asc&sort_by_id=asc&page=1&page_size=25`);
         if (!palletListingResponse.ok) {
           let errorMsg = "";
           try {
@@ -16,11 +18,15 @@ export async function buySneiper(senderAddress, signingCosmWasmClient) {
           throw new Error(`${getFormattedTimestamp()}:Failed to get pallet listings! ${errorMsg} Retrying...`);
         }
         const palletListingResponseData = await palletListingResponse.json();
-        if (palletListingResponseData.count > 0 && !isProcessingBuyQueue) {
-          console.log(`${getFormattedTimestamp()}:Listings valid! Sneiping...`)
-          executionQueue.push({ senderAddress, palletListingResponseData, signingCosmWasmClient});
-          processQueue();
-        }
+        const filteredListings = filterByTraits(palletListingResponseData.tokens, desiredTraits);
+
+          if (filteredListings.length > 0 && !isProcessingBuyQueue) {
+              console.log(`${getFormattedTimestamp()}:Filtered listings valid! Sniping...`)
+              filteredListings.forEach(listing => {
+                  executionQueue.push({ senderAddress, palletListingResponseData: { tokens: [listing] }, signingCosmWasmClient});
+              });
+              await processQueue();
+          }
       } else {
         const tokenIds = process.env.TOKEN_ID.split(',').map(id => parseInt(id.trim(), 10));
 
@@ -42,16 +48,29 @@ export async function buySneiper(senderAddress, signingCosmWasmClient) {
           const palletListingResponseData = await palletListingResponse.json();
     
           if (isValidListing(palletListingResponseData) && !isProcessingBuyQueue) {
-            console.log(`${getFormattedTimestamp()}:Listing valid for token id: ${tokenId}! Sneiping...`)
+            console.log(`${getFormattedTimestamp()}:Listing valid for token id: ${tokenId}! Sniping...`)
             executionQueue.push({ senderAddress, palletListingResponseData, signingCosmWasmClient});
-            processQueue();
+            await processQueue();
           }
         }
       }
     } catch (error){
-        console.log(`${getFormattedTimestamp()}:Sneipe unsuccessful! " + ${error.message}`);
+        console.log(`${getFormattedTimestamp()}:Snipe unsuccessful! " + ${error.message}`);
     }
 }
+
+function filterByTraits(listings, desiredTraits) {
+    return listings.filter(listing => {
+        const { traits } = listing.token; // Extract traits from the token information
+        return traits.every(trait => {
+            const { type, value } = trait;
+            // Check if the current trait type and value match any of the desired traits
+            return desiredTraits.some(desiredTrait =>
+                desiredTrait.type === type && desiredTrait.value === value);
+        });
+    });
+}
+
 
 export async function processQueue() {
     if (isProcessingBuyQueue || executionQueue.length === 0) {
@@ -72,10 +91,10 @@ export async function processQueue() {
         await executeContract(senderAddress, palletListingResponseData, signingCosmWasmClient);
       }
     } catch (error) {
-        console.log(getFormattedTimestamp() + ":Sneipe unsuccessful! " + error.message);
+        console.log(getFormattedTimestamp() + ":Snipe unsuccessful! " + error.message);
     } finally {
        updateProcessingBuyQueueStatus(false);
-       processQueue();
+       await processQueue();
     }
   }
   
@@ -103,11 +122,11 @@ export async function processQueue() {
           amount: finalPalletAmount.toString()
         }];
         
-        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", msg, "auto", "sneiper", totalFunds );
+        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", msg, "auto", "sniper", totalFunds );
         if(result.transactionHash){
           boughtTokenIds.add(palletListingResponseData.tokens[0].id_int);
-          console.log(getFormattedTimestamp() + ":Sneipe successful for token id:" + palletListingResponseData.tokens[0].id_int + ", Tx hash: " + result.transactionHash);
-      
+          console.log(getFormattedTimestamp() + ":Snipe successful for token id:" + palletListingResponseData.tokens[0].id_int + ", Tx hash: " + result.transactionHash);
+
           if (boughtTokenIds.size === targetTokenIds.size || boughtTokenIds.size ===  process.env.BUY_LIMIT ) {
               console.log(getFormattedTimestamp() + ":All tokens have been successfully bought. Exiting...");
               clearAllIntervals();
@@ -115,22 +134,22 @@ export async function processQueue() {
           }
         }
         else {
-          console.log(getFormattedTimestamp() + ":Sneipe unsuccessful!")
+          console.log(getFormattedTimestamp() + ":Snipe unsuccessful!")
         }
       } catch (error) {
-        console.log(getFormattedTimestamp() + ":Sneipe unsuccessful! " + error.message);
+        console.log(getFormattedTimestamp() + ":Snipe unsuccessful! " + error.message);
       }
   }
-  
+
   export async function executeContractMultiple(senderAddress, palletListingResponseData, signingCosmWasmClient) {
     try {
-  
+
       let batchBids = {
         "batch_bids": {
             "bids": []
         }
       };
-      
+
       const batchBidsSliced = palletListingResponseData.tokens.slice(0, process.env.BUY_LIMIT).map(token => ({
         "bid_type": {
           "buy_now": {
@@ -145,9 +164,9 @@ export async function processQueue() {
           "token_id": token.id_int.toString()
         }
       }));
-  
+
         batchBids.batch_bids.bids = batchBidsSliced;
-  
+
         let totalAmount = 0;
         batchBidsSliced.forEach(bid => {
           let amount = parseFloat(bid.bid_type.buy_now.expected_price.amount);
@@ -158,21 +177,21 @@ export async function processQueue() {
             amount: totalAmount.toString()
         }];
 
-        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", batchBids, "auto", "sneiper", totalFunds);
-  
+        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", batchBids, "auto", "sniper", totalFunds);
+
         if (result.transactionHash) {
-            console.log(getFormattedTimestamp() + ":Sneipe successful! Tx hash: " + result.transactionHash);
+            console.log(getFormattedTimestamp() + ":Snipe successful! Tx hash: " + result.transactionHash);
             console.log(getFormattedTimestamp() + ":All tokens have been successfully bought. Exiting...");
             clearAllIntervals();
             process.exit(0);
         } else {
-            console.log(getFormattedTimestamp() + ":Sneipe unsuccessful!");
+            console.log(getFormattedTimestamp() + ":Snipe unsuccessful!");
         }
     } catch (error) {
-        console.log(getFormattedTimestamp() + ":Sneipe unsuccessful! " + error.message);
+        console.log(getFormattedTimestamp() + ":Snipe unsuccessful! " + error.message);
     }
   }
-  
+
   export async function executeContractAuto(senderAddress, palletListingResponseData, signingCosmWasmClient) {
     for (const token of palletListingResponseData.tokens) {
       try {
@@ -184,34 +203,34 @@ export async function processQueue() {
             },
             "nft": {
               "address": process.env.CONTRACT_ADDRESS,
-              "token_id": token.id.toString() 
+              "token_id": token.id.toString()
             }
           }
         };
-  
+
         const amountNumber = parseFloat(token.auction.price[0].amount);
         const finalAmount = amountNumber + (amountNumber * 0.02); // 2% fee
-  
+
         const totalFunds = [{
             denom: 'usei',
             amount: finalAmount.toString()
         }];
-   
-        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", bid, "auto", "sneiper", totalFunds);
+
+        const result = await signingCosmWasmClient.execute(senderAddress, "sei152u2u0lqc27428cuf8dx48k8saua74m6nql5kgvsu4rfeqm547rsnhy4y9", bid, "auto", "sniper", totalFunds);
   
         if (result.transactionHash) {
             boughtTokenIds.add(token.id_int);
             const buyLimit = parseInt(process.env.BUY_LIMIT, 10); 
-            console.log(getFormattedTimestamp() + ":Sneipe successful for token id:" + token.id_int + ", Tx hash: " + result.transactionHash);
+            console.log(getFormattedTimestamp() + ":Snipe successful for token id:" + token.id_int + ", Tx hash: " + result.transactionHash);
             if (boughtTokenIds.size ===  buyLimit) {
                 console.log(getFormattedTimestamp() + ":All tokens have been successfully bought. Exiting...");
                 process.exit(0);
             }
         } else {
-            console.log(getFormattedTimestamp() + `:Sneipe unsuccessful for token id: ${token.id}`);
+            console.log(getFormattedTimestamp() + `:Snipe unsuccessful for token id: ${token.id}`);
         }
       } catch (error) {
-        console.log(getFormattedTimestamp() + ":Sneipe unsuccessful! " + error.message);
+        console.log(getFormattedTimestamp() + ":Snipe unsuccessful! " + error.message);
       }
     }
   }
