@@ -1,5 +1,5 @@
 import { configDotenv } from "dotenv";
-configDotenv.apply(); //Get .env file
+configDotenv.apply();
 
 export let mintingIntervalIds = {};
 export let buyingIntervalIds = [];
