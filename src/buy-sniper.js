@@ -60,15 +60,17 @@ export async function buySniper(senderAddress, signingCosmWasmClient) {
 }
 
 function filterByTraits(listings, desiredTraits) {
-    return listings.filter(listing => {
-        const { traits } = listing.token; // Extract traits from the token information
-        return traits.every(trait => {
-            const { type, value } = trait;
-            // Check if the current trait type and value match any of the desired traits
-            return desiredTraits.some(desiredTrait =>
-                desiredTrait.type === type && desiredTrait.value === value);
-        });
+  return listings.filter(listing => {
+    // Safely access traits, accounting for any missing data
+    const traits = listing.token && listing.token.traits ? listing.token.traits : [];
+
+    // Now, check if all desired traits are present
+    return traits.every(trait => {
+      // Ensure each trait is valid and then compare
+      return desiredTraits.some(desiredTrait =>
+          trait.type === desiredTrait.type && trait.value === desiredTrait.value);
     });
+  });
 }
 
 
